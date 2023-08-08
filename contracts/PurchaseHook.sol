@@ -4,31 +4,32 @@ pragma solidity ^0.8.0;
 import "@unlock-protocol/contracts/dist/PublicLock/IPublicLockV13.sol";
 import "hardhat/console.sol";
 
+error Unauthorized();
+
 contract PurchaseHook {
+    IPublicLockV13 lock;
     mapping(address => address payable) public referals;
     mapping(address => uint256) public referalAmounts;
 
     /** Constructor */
-    constructor() {}
+    constructor(IPublicLockV13 _lock) {
+        lock = _lock;
+    }
 
     // set referal
-    function setReferal(address _recipient, address payable _referrer) public {
+    function setReferrer(
+        address _recipient,
+        address payable _referrer
+    ) private {
         referals[_recipient] = _referrer;
     }
 
-    // get referal
-    function getReferal(address _user) public view returns (address payable) {
-        return referals[_user];
-    }
-
-    // get referal amount
-    function getReferalAmount(address _referr) public view returns (uint256) {
-        return referalAmounts[_referr];
-    }
-
     // set referal amount
-    function setReferalAmount(address _referr, uint256 _amount) public {
-        referalAmounts[_referr] = _amount;
+    function setReferrerAmount(address _referrer, uint256 _amount) public {
+        if (!lock.isLockManager(msg.sender)) {
+            revert Unauthorized();
+        }
+        referalAmounts[_referrer] = _amount;
     }
 
     /**
@@ -44,7 +45,7 @@ contract PurchaseHook {
         address /* referrer */,
         bytes calldata /* data */
     ) external view returns (uint256 minKeyPrice) {
-        return IPublicLockV13(msg.sender).keyPrice();
+        return lock.keyPrice();
     }
 
     /**
@@ -62,11 +63,18 @@ contract PurchaseHook {
         uint256 /*minKeyPrice*/,
         uint256 /*pricePaid*/
     ) external {
-        console.log("onKeyPurchase");
+        if (msg.sender != address(lock)) {
+            revert Unauthorized();
+        }
+        // console.log("onKeyPurchase");
+        // console.log("recipient %s", recipient);
+        // console.log("referrer %s", referrer);
+        // console.log(referalAmounts[referrer]);
+
         // Do nothing
-        setReferal(recipient, referrer);
-        console.log("referrer", referrer);
-        IPublicLockV13(msg.sender).withdraw(msg.sender, referrer, 1000);
+        setReferrer(recipient, referrer);
+        address currency = lock.tokenAddress();
+        lock.withdraw(currency, referrer, referalAmounts[referrer]); // Pay fee to referrer
     }
 
     function onKeyExtend(
@@ -75,11 +83,12 @@ contract PurchaseHook {
         uint256 /* newTimestamp */,
         uint256 /* old expirationTimestamp */
     ) external {
-        // No-op
-        console.log("onKeyExtend");
-        uint256 price = IPublicLockV13(msg.sender).keyPrice();
-        console.log("price", price);
-        address payable referrer = getReferal(from);
-        IPublicLockV13(msg.sender).withdraw(msg.sender, referrer, 1000);
+        if (msg.sender != address(lock)) {
+            revert Unauthorized();
+        }
+        // console.log("onKeyExtend");
+        address payable referrer = referals[from];
+        address currency = lock.tokenAddress();
+        lock.withdraw(currency, referrer, referalAmounts[referrer]);
     }
 }
